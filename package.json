@@ -10,6 +10,7 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@inquirer/prompts": "^8.4.3",
     "@xmldom/xmldom": "^0.8.11",
     "axios": "^1.12.2",
     "cheerio": "^1.1.2",
