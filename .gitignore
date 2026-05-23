@@ -5,6 +5,7 @@ node_modules/
 dist/
 
 # Generated EPUB files
+output/
 *.epub
 
 # OS files
