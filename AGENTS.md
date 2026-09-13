@@ -14,7 +14,7 @@ The entry point `index.js` is a thin dispatcher; all logic lives in `lib/`:
 | `lib/tui.js` | Interactive flow; exports `main()` and `selectChapterCover()` |
 | `lib/cli.js` | Argument parsing + non-interactive pipeline (batch URLs, retry-failed); exports `resolveOptions()`, `resolveVolumes()`, `resolveChapters()`, `loadFailureReport()`, `runCli()` |
 | `lib/scraper.js` | Orchestrates EPUB output (merged / separate-per-volume); writes `*.failed.json` |
-| `lib/epub.js` | EPUB assembly: chapters, cover page, volume pages, nav.xhtml, toc.ncx, content.opf, image dedup/compression |
+| `lib/epub.js` | EPUB assembly: chapters, cover page, colour-page, volume pages, nav.xhtml, toc.ncx, content.opf, illustration anchoring, image dedup/compression |
 | `lib/txt.js` | TXT + images output |
 | `lib/parse.js` | Book metadata (title, tags, date, publisher), chapter index, ordered content extraction |
 | `lib/runtime.js` | `createRunContext()` — the per-run config object (outDir, cache, rate limiter, concurrency limits, net client) |
@@ -71,6 +71,9 @@ Everything that used to be a module-level singleton is now a field on one explic
 | `fetch.setDelayMode()` / `setRateLimit()` | `run.limiter` (created by `createRateLimiter`) |
 | `epub.setConcurrency()` | `run.limits.chapters` / `run.limits.images` (pLimit instances) |
 | `cache.configure()` | `run.cache` (a store from `createCacheStore`) |
+| — | `run.logger` — `info`/`warn`/`error`, defaults to `console` but **silent under `node:test`** |
+
+**Library code must log through `run.logger`, not `console` directly.** Besides being the right design for a library, this is load-bearing: a test file that lets the library write freely to stdout intermittently corrupts the Node test runner's result channel (`Unable to deserialize cloned data`), which showed up as ~1 in 4 full-suite runs failing on `test/illustration-anchors.test.js` while every individual test passed. Silencing the library output took it to 15/15. Pass an explicit `logger` when you need logs during tests.
 
 **Why it matters:** the old design allowed only one configuration per process, so two concurrent jobs with different settings would clobber each other. **Do not reintroduce module-level mutable state** — create it on the context instead. `test/runtime.test.js` asserts the isolation (including two different-config jobs running concurrently).
 
@@ -114,6 +117,27 @@ These were all previously violated and are now covered by `test/epub.test.js` (a
 
 - `--cover best` picks the highest pixel-count illustration across the selection (`json.imgInfo`, filled from `imageDimensions()` in `lib/cover.js`). This exists because the site's own cover is only 209×300 while in-book art is often ~2100×1600 — a ~56× pixel difference.
 - `--compress-images` uses `sharp` **only if installed**; `getSharp()` caches the probe and `warnSharpMissing()` degrades gracefully. Never make sharp a hard dependency.
+
+### Illustration index markers (`（插图NNN）`)
+
+Some transcription groups leave position markers in the narrative; the site itself does not guarantee them, and coverage is uneven (in book 3947 only volumes 1–2 have them, the other six do not). `--no-illustration-anchors` turns the whole feature off.
+
+Layout produced for a volume that has markers, with `k = min(valid marker number)`:
+
+| Image ordinal | Goes to |
+|---|---|
+| `1 … k-1` | a `color_{vol}.xhtml` page placed **before** that volume's `vol_{vol}.xhtml` |
+| numbered by a marker | inline, replacing the marker paragraph |
+| the `插图` chapter | **untouched** — every image stays there as well |
+| volume with no markers | **untouched** |
+
+Constraints that must be preserved when changing this code:
+
+- **Backfill runs after every chapter is downloaded** (`applyIllustrationAnchors` at the end of `creatText`). Only then is "the Nth image of this volume" a settled file name. Do not try to resolve a marker while its chapter is being processed — the images may live in a *different* chapter (3947 vol 6 has them across `插图` and `情书`), and chapters download concurrently.
+- **`json._slots[vol][chapter]` is positionally aligned with the chapter's images, using `null` for failures.** It is deliberately not the compact success list: a failed download must not shift every later marker onto the wrong picture. `buildVolumeImagePlan()` concatenates these in chapter order to get the volume ordinal.
+- **Only usable markers drive the split.** A marker is usable when its number is in range *and* its image was actually downloaded; `k` is the minimum of those. Using raw marker numbers instead lets a single bogus `（插图099）` promote the entire volume's art to the front as "color pages".
+- **Placeholders keep the original text.** `processChapter` emits `<p class="ill-pending">（插图006）</p>`; if backfill cannot resolve it, the reader sees the original marker rather than nothing. `class` is used rather than a `data-*` attribute because EPUB2 is XHTML 1.1, which forbids custom `data-*`.
+- Inline images reference **the same file** as the gallery copy, so nothing is stored twice — this falls out of resolving to `plan[n-1]` rather than re-downloading.
 
 ## Reliability patterns
 
