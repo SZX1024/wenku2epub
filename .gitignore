@@ -8,6 +8,9 @@ dist/
 output/
 *.epub
 
+# Chapter/image cache (incremental download)
+.cache/
+
 # OS files
 .DS_Store
 Thumbs.db
