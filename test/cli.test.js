@@ -8,7 +8,6 @@ const {
   parseArgv, resolveOptions, resolveVolumes, resolveChapters, loadFailureReport, readBatchFile, CliError,
 } = require('../lib/cli');
 const { writeFailureReport } = require('../lib/scraper');
-const { setOutputDir, getOutputDir } = require('../lib/config');
 
 // 用一份空配置保证测试不受开发机上 ~/.wenku2epubrc 影响
 const EMPTY_CONFIG = path.join(os.tmpdir(), `wenku2epub-empty-${process.pid}.json`);
@@ -215,9 +214,7 @@ test('loadFailureReport 对缺失或非法文件报错', () => {
 });
 
 test('失败清单可以「写出→读回」闭环（生产者与消费者契约一致）', () => {
-  const originalDir = getOutputDir();
   const outDir = path.join(os.tmpdir(), `wenku2epub-fail-${process.pid}`);
-  setOutputDir(outDir);
 
   try {
     const json = {
@@ -237,6 +234,7 @@ test('失败清单可以「写出→读回」闭环（生产者与消费者契�
       url: 'https://www.wenku8.net/book/9.htm',
       safeTitle: '某书',
       skipped: json.skipped,
+      outDir,
     });
     assert.ok(file && fs.existsSync(file), '应当写出失败清单');
 
@@ -246,25 +244,21 @@ test('失败清单可以「写出→读回」闭环（生产者与消费者契�
     assert.deepEqual(report.chapters, { 0: [3, 7], 2: [1] });
     assert.equal(report.title, '某书');
   } finally {
-    setOutputDir(originalDir);
     fs.rmSync(outDir, { recursive: true, force: true });
   }
 });
 
 test('没有失败章节时不写失败清单', () => {
-  const originalDir = getOutputDir();
   const outDir = path.join(os.tmpdir(), `wenku2epub-nofail-${process.pid}`);
-  setOutputDir(outDir);
 
   try {
     const result = writeFailureReport(
       { titles: '某书', content: {}, skipped: [] },
-      { url: 'x', safeTitle: '某书', skipped: [] }
+      { url: 'x', safeTitle: '某书', skipped: [], outDir }
     );
     assert.equal(result, null);
     assert.equal(fs.existsSync(outDir), false, '不应创建任何文件');
   } finally {
-    setOutputDir(originalDir);
     fs.rmSync(outDir, { recursive: true, force: true });
   }
 });

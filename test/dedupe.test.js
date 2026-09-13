@@ -1,9 +1,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const cheerio = require('cheerio');
-
-// 必须在 require epub 之前打补丁：epub.js 在加载时就解构了 fetch 的导出
-const fetchMod = require('../lib/fetch');
+const { createRunContext } = require('../lib/runtime');
+const { creatEpub } = require('../lib/epub');
 
 function makeJpeg(width, height, payload) {
   const app0 = Buffer.concat([
@@ -41,18 +40,22 @@ const CHAPTER_HTML = `
     <img src="https://img.test/b.jpg" />
   </div>`;
 
-// 用闭包读取的可变集合控制"哪些图片下载失败"。
-// 注意：epub.js 在加载时就解构了 fetchImage，之后再替换模块导出是无效的，
-// 所以失败注入必须走这个 stub 内部的可变状态。
+// 通过 RunContext 的 net 注入点完全绕开网络。
+// 以前这里是 monkey-patch 模块导出，必须小心 require 顺序（epub.js 在加载时就
+// 解构了 fetch 的导出）；现在换成显式注入，没有顺序陷阱，也更贴近真实用法。
+let chapterHtml = CHAPTER_HTML;
 let failingSrcs = new Set();
 
-// 同理，章节 HTML 也要通过可变变量控制
-let chapterHtml = CHAPTER_HTML;
-
-fetchMod.askChapter = async () => cheerio.load(chapterHtml);
-fetchMod.fetchImage = async (src) => (failingSrcs.has(src) ? null : IMAGES[src] || null);
-
-const { creatEpub } = require('../lib/epub');
+function makeRun(overrides = {}) {
+  return createRunContext({
+    cache: { enabled: false },
+    net: {
+      loadChapterPage: async () => cheerio.load(chapterHtml),
+      loadImage: async (src) => (failingSrcs.has(src) ? null : IMAGES[src] || null),
+      ...overrides,
+    },
+  });
+}
 
 function makeJson() {
   return {
@@ -65,9 +68,9 @@ function makeJson() {
   };
 }
 
-async function build(options) {
+async function build(options = {}) {
   const json = makeJson();
-  const book = await creatEpub(json, options);
+  const book = await creatEpub(json, { run: makeRun(), ...options });
   const names = Object.keys(book.files);
   return {
     json,
@@ -131,16 +134,27 @@ test('章节里没有插图时，不产生空的 OEBPS/Image 目录（epubcheck 
   chapterHtml = '<div id="content">只有文字，没有任何插图</div>';
 
   try {
-    const book = await creatEpub(makeJson(), { dedupeImages: true });
+    const book = await creatEpub(makeJson(), { run: makeRun(), dedupeImages: true });
     const files = book.files;
     const dirs = Object.entries(files).filter(([, f]) => f.dir).map(([name]) => name);
     const emptyDirs = dirs.filter(dir => !Object.keys(files).some(n => n.startsWith(dir) && n !== dir && !files[n].dir));
 
     assert.deepEqual(emptyDirs, [], `不应存在空目录条目：${emptyDirs}`);
     assert.ok(Object.keys(files).some(n => n.startsWith('OEBPS/Text/')), '章节文件仍应写入');
+
     const imageKeys = Object.keys(files).filter(n => n.startsWith('OEBPS/Image/'));
     assert.deepEqual(imageKeys, [], `不应有 Image 条目：${JSON.stringify(imageKeys)}`);
   } finally {
     chapterHtml = CHAPTER_HTML;
   }
+});
+
+test('章节页面加载失败时该章节被记为 skipped，而不是写出空文件', async () => {
+  const json = makeJson();
+  const run = makeRun({ loadChapterPage: async () => null });
+
+  const book = await creatEpub(json, { run, dedupeImages: true });
+
+  assert.deepEqual(json.skipped, [{ volume: 0, chapter: 0, title: '第一章', reason: '页面请求失败' }]);
+  assert.equal(Object.keys(book.files).filter(n => n.startsWith('OEBPS/Text/0_0')).length, 0);
 });
