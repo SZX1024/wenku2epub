@@ -1,5 +1,11 @@
 # Wenku8 下载器
 
+> **本项目由 AI 编写。**
+>
+> 代码实现（含重构、测试与文档）由 AI 编程代理完成；需求定义、方案取舍与验收由人工把关。
+> 所有改动都跑过回归测试（`npm test`，91 个用例）并用 [EPUBCheck](https://github.com/w3c/epubcheck) 校验过产物（EPUB 2 / EPUB 3 均为 0 error / 0 warning），
+> 但这**不构成对代码正确性或适用性的保证**，使用前请自行评估。
+
 从 [wenku8](https://www.wenku8.net/) 下载轻小说，支持 EPUB 电子书和 TXT+插图两种输出格式的 Node.js 命令行工具。
 
 ## 功能
