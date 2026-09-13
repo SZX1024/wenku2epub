@@ -181,3 +181,10 @@ npm test        # 运行回归测试（node:test，无需额外依赖）
 npm run lint    # ESLint 检查
 java -jar epubcheck.jar output/*.epub   # EPUB 合规性校验
 ```
+
+抓取层的解析逻辑用 `test/fixtures/` 下的**真实页面快照**做离线断言。站点改版导致解析测试失败时，重跑抓取脚本并看 fixtures 的 diff：
+
+```bash
+node tools/capture-fixtures.js   # 重新抓取样本（需要联网）
+git diff test/fixtures/          # 站点具体改了什么，一目了然
+```
