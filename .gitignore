@@ -11,6 +11,12 @@ output/
 # Chapter/image cache (incremental download)
 .cache/
 
+# Scratch space (epubcheck, ad-hoc fixtures)
+.tmp/
+
+# Local npm cache (used when ~/.npm is not writable)
+.npm-cache/
+
 # OS files
 .DS_Store
 Thumbs.db

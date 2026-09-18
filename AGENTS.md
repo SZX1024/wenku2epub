@@ -118,26 +118,54 @@ These were all previously violated and are now covered by `test/epub.test.js` (a
 - `--cover best` picks the highest pixel-count illustration across the selection (`json.imgInfo`, filled from `imageDimensions()` in `lib/cover.js`). This exists because the site's own cover is only 209×300 while in-book art is often ~2100×1600 — a ~56× pixel difference.
 - `--compress-images` uses `sharp` **only if installed**; `getSharp()` caches the probe and `warnSharpMissing()` degrades gracefully. Never make sharp a hard dependency.
 
-### Illustration index markers (`（插图NNN）`)
+### Illustration index markers
 
-Some transcription groups leave position markers in the narrative; the site itself does not guarantee them, and coverage is uneven (in book 3947 only volumes 1–2 have them, the other six do not). `--no-illustration-anchors` turns the whole feature off.
+Some transcription groups leave position markers in the narrative; the site does not guarantee them and coverage is uneven (book 3947 has them only in volumes 1–2; book 3396 has them in all three). `--no-illustration-anchors` turns the whole feature off.
 
-Layout produced for a volume that has markers, with `k = min(valid marker number)`:
+Two conventions were observed in the wild and **the numbering base differs**:
 
-| Image ordinal | Goes to |
+| Book | Marker | Numbers mean |
+|---|---|---|
+| 3947 | `（插图006）` | gallery ordinal (the 6th image) |
+| 3396 | `image01` | black-and-white illustration ordinal (counted from 1) |
+
+#### The unifying rule
+
+```
+galleryIndex = markerNumber + (galleryCount − maxMarkerNumber)
+```
+
+i.e. **the marked images are always the tail of the gallery** (colour pages first, illustrations after — the standard light-novel layout). Verified on all five marker-bearing volumes across both books, and cross-checked independently against pixel saturation (3396 vol 2: predicted 1–6 colour / 7–17 mono, measured 17/17 correct).
+
+The **gallery** is the image set of the chapter whose title matches `GALLERY_TITLE`. Images in later chapters (特典 etc.) are excluded — 3396 vol 2 has 17 in the gallery chapter plus one each in two 特典 chapters; counting the whole volume would shift everything by two.
+
+#### Where each image ends up
+
+| Image | Destination |
 |---|---|
-| `1 … k-1` | a `color_{vol}.xhtml` page placed **before** that volume's `vol_{vol}.xhtml` |
-| numbered by a marker | inline, replacing the marker paragraph |
+| marked | inline, replacing the marker paragraph |
+| before the first mapped | `color_{vol}.xhtml`, before that volume's `vol_{vol}.xhtml` |
+| in a numbering gap | **immediately after the preceding mapped image**, same position |
+| after the last mapped | `color_end_{vol}.xhtml`, after the volume's last chapter (empty under the current rule) |
 | the `插图` chapter | **untouched** — every image stays there as well |
 | volume with no markers | **untouched** |
 
-Constraints that must be preserved when changing this code:
+#### Constraints to preserve
 
-- **Backfill runs after every chapter is downloaded** (`applyIllustrationAnchors` at the end of `creatText`). Only then is "the Nth image of this volume" a settled file name. Do not try to resolve a marker while its chapter is being processed — the images may live in a *different* chapter (3947 vol 6 has them across `插图` and `情书`), and chapters download concurrently.
-- **`json._slots[vol][chapter]` is positionally aligned with the chapter's images, using `null` for failures.** It is deliberately not the compact success list: a failed download must not shift every later marker onto the wrong picture. `buildVolumeImagePlan()` concatenates these in chapter order to get the volume ordinal.
-- **Only usable markers drive the split.** A marker is usable when its number is in range *and* its image was actually downloaded; `k` is the minimum of those. Using raw marker numbers instead lets a single bogus `（插图099）` promote the entire volume's art to the front as "color pages".
-- **Placeholders keep the original text.** `processChapter` emits `<p class="ill-pending">（插图006）</p>`; if backfill cannot resolve it, the reader sees the original marker rather than nothing. `class` is used rather than a `data-*` attribute because EPUB2 is XHTML 1.1, which forbids custom `data-*`.
-- Inline images reference **the same file** as the gallery copy, so nothing is stored twice — this falls out of resolving to `plan[n-1]` rather than re-downloading.
+- **Backfill runs after every chapter is downloaded** (`applyIllustrationAnchors` at the end of `creatText`). Only then is "the Nth image of the gallery" a settled file name. Markers may live in a *different* chapter from their images (3947 vol 6 keeps them across `插图` and `情书`) and chapters download concurrently, so markers cannot be resolved while a chapter is being processed.
+- **`json._slots[vol][chapter]` is positionally aligned with the chapter's images, using `null` for failures.** Deliberately not the compact success list: a failed download must not shift every later marker onto the wrong picture.
+- **All-or-nothing per volume.** The mapping is either *valid* (every mapped index in range, image present, strictly increasing) or it is **not applied at all** and the original marker text is kept. Never partially place. A single bogus `（插图099）` must not promote a whole volume's art to the front.
+- **Placeholders keep the original text.** `processChapter` emits `<p class="ill-pending">（插图006）</p>`; unresolved markers therefore degrade to the original text rather than vanishing. `class` is used rather than a `data-*` attribute because EPUB2 is XHTML 1.1, which forbids custom `data-*`.
+- Inline images reference **the same file** as the gallery copy (resolve to the planned name, never re-download).
+- The per-volume report line is emitted through `run.logger` and always says something — including "未识别到插图标记" — so a silent no-op is impossible.
+
+### Marker regex
+
+`ILLUSTRATION_MARKER` in `lib/parse.js` accepts three shapes (bracketed / keyword+number / bare keyword) over a keyword list covering `image|img|illust(ration)|pic(ture)|fig(ure)|photo` and `插图|插画|插圖|彩页|彩图|扉页|口绘`. Two deliberate exclusions keep it from eating prose: a bare `图` (which matches 图案/意图/企图) and a keyword in mid-sentence (the afterword's "感谢您担任本作的插图。"). The ASCII keyword+number form uses lookarounds so `image01image02` does **not** match — real pages always separate markers with spaces or `<br>`.
+
+### Site watermark
+
+Each chapter carries a `本文来自 轻小说文库(...)` / `最新最全的日本动漫轻小说 ... 为你一网打尽！` line at head and tail, both inside `<ul id="contentdp">`. They are stripped **structurally** (skip that element id, so any mirror domain is covered) plus a short-text fallback (`isWatermarkText`, guarded by a length limit so a long paragraph mentioning the site is not deleted). Transcription credits (`台版 转自 轻之国度` etc.) are deliberately **kept** — they are attribution, not site watermark.
 
 ## Reliability patterns
 
